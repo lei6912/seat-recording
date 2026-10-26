@@ -87,8 +87,8 @@ appsScript: {
 全部都在 `assets/config.js`：
 
 ```js
-title: '英語朗讀錄音作業',                 // 頁面標題
-assignmentNote: '請朗讀課本第 12 頁的對話…',  // 給學生看的作業說明
+title: '安慶國小一年甲班錄音作業',          // 頁面標題
+assignmentNote: '',                       // 作業說明；留空＝學生頁不顯示這一塊
 seatCount: 21,                            // 班上人數（座號 1 ~ 21）
 requireName: false,                       // true = 學生要一併填姓名
 deadlineNote: '',                         // 截止提示文字（純提示，不會真的鎖住）
