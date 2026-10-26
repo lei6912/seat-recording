@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>教師後台</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="assets/ui.css">
+</head>
+<body>
+<div class="wrap wrap--wide">
+
+  <header class="top">
+    <div>
+      <h1>教師後台</h1>
+      <p class="sub" id="subLine">錄音繳交狀況</p>
+    </div>
+    <div class="btn-row" id="headerActions" hidden>
+      <button type="button" class="btn btn--ghost btn--small" id="refreshBtn">重新整理</button>
+      <button type="button" class="btn btn--ghost btn--small" id="logoutBtn">登出</button>
+    </div>
+  </header>
+
+  <!-- ===== 登入 ===== -->
+  <section class="card" id="loginCard">
+    <h2>請登入</h2>
+    <p class="help">輸入教師帳號密碼後即可檢視全班繳交狀況。</p>
+
+    <form id="loginForm" novalidate>
+      <label class="field">
+        <span>帳號</span>
+        <input type="text" id="userInput" autocomplete="username"
+               autocapitalize="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>密碼</span>
+        <input type="password" id="passInput" autocomplete="current-password">
+      </label>
+      <button type="submit" class="btn btn--block">登入</button>
+    </form>
+
+    <div id="loginMsg" class="msg" hidden></div>
+  </section>
+
+  <!-- ===== 後台內容 ===== -->
+  <main id="dashboard" hidden>
+
+    <div id="backendWarn" class="msg msg--warn" hidden style="margin-bottom:18px"></div>
+    <div id="loadMsg" class="msg" hidden style="margin-bottom:18px"></div>
+
+    <!-- 統計 -->
+    <div class="stats">
+      <div class="stat is-done"><div class="n" id="statDone">–</div><div class="k">已完成</div></div>
+      <div class="stat is-todo"><div class="n" id="statTodo">–</div><div class="k">尚未完成</div></div>
+      <div class="stat"><div class="n" id="statTotal">–</div><div class="k">全班人數</div></div>
+    </div>
+
+    <!-- 未完成 -->
+    <section class="card">
+      <div class="spread">
+        <h2 style="margin:0">尚未完成的座號</h2>
+        <button type="button" class="btn btn--ghost btn--small" id="copyTodoBtn">複製名單</button>
+      </div>
+      <p class="help" id="todoList" style="margin-top:10px;margin-bottom:0"></p>
+    </section>
+
+    <!-- 進度一覽 -->
+    <section class="card">
+      <h2>全班進度一覽</h2>
+      <p class="help">綠色 = 已交，紅色 = 未交。</p>
+      <div class="status-grid" id="statusGrid"></div>
+    </section>
+
+    <!-- 錄音清單 -->
+    <section class="card">
+      <div class="spread">
+        <h2 style="margin:0">已繳交的錄音</h2>
+        <button type="button" class="btn btn--ghost btn--small" id="exportBtn">匯出 CSV</button>
+      </div>
+      <p class="help" style="margin-top:10px">直接按播放鍵就能聽。</p>
+      <ul class="sub-list" id="subList"></ul>
+      <p class="muted small" id="emptyHint" hidden style="margin:0">還沒有人繳交。</p>
+    </section>
+
+    <!-- 手動補登 -->
+    <section class="card">
+      <h2>手動補登 / 修改</h2>
+      <p class="help">學生把連結用別的方式給你（例如寫在紙上、傳訊息）時，可以在這裡代為登錄。</p>
+
+      <form id="manualForm" novalidate>
+        <label class="field">
+          <span>座號</span>
+          <select id="manualSeat"></select>
+        </label>
+        <label class="field">
+          <span>姓名（可留空）</span>
+          <input type="text" id="manualName">
+        </label>
+        <label class="field">
+          <span>Vocaroo 連結</span>
+          <input type="text" id="manualLink" autocapitalize="off" spellcheck="false"
+                 placeholder="https://voca.ro/xxxxxxxx">
+        </label>
+        <button type="submit" class="btn">儲存</button>
+      </form>
+
+      <div id="manualMsg" class="msg" hidden></div>
+    </section>
+
+    <footer class="foot">
+      <p style="margin:0 0 6px"><strong>安全性說明</strong></p>
+      <p style="margin:0">
+        這是純靜態網站，後台帳密寫在前端程式碼裡，只能擋住隨手點進來的人，
+        懂技術的人看網頁原始碼就能看到帳密、也能直接讀取資料。
+        請不要在這裡放需要保密的內容。
+      </p>
+      <p style="margin:8px 0 0">資料來源：<span id="backendName" class="nowrap"></span></p>
+    </footer>
+
+  </main>
+
+</div>
+
+<script src="assets/config.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/vocaroo.js"></script>
+<script src="assets/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>錄音作業繳交</title>
+<meta name="description" content="輸入座號、到 Vocaroo 錄音，再把連結貼回來即可完成繳交。">
+<link rel="stylesheet" href="assets/ui.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1 id="pageTitle">錄音作業繳交</h1>
+      <p class="sub">不用帳號密碼，選座號就可以交</p>
+    </div>
+  </header>
+
+  <!-- 後端尚未設定 / 測試模式的提示 -->
+  <div id="backendWarn" class="msg msg--warn" hidden></div>
+
+  <!-- 作業說明 -->
+  <div id="noteCard" class="card" hidden>
+    <h2>作業說明</h2>
+    <p id="assignmentNote" class="help" style="margin-bottom:0"></p>
+    <p id="deadlineNote" class="small muted" style="margin:8px 0 0" hidden></p>
+  </div>
+
+  <!-- 步驟 1：座號 -->
+  <section class="card">
+    <h2><span class="step">1</span>選擇你的座號</h2>
+    <p class="help">點一下自己的座號。</p>
+
+    <div id="seatGrid" class="seat-grid" role="group" aria-label="座號"></div>
+
+    <label class="field" id="nameField" hidden style="margin-top:16px">
+      <span>姓名</span>
+      <input type="text" id="nameInput" autocomplete="name" placeholder="請填姓名">
+    </label>
+
+    <div id="seatNotice" class="msg msg--info" hidden></div>
+  </section>
+
+  <!-- 步驟 2：錄音 -->
+  <section class="card">
+    <h2><span class="step">2</span>到 Vocaroo 錄音</h2>
+    <p class="help">按下面的按鈕會開一個新視窗，錄完再回到這一頁。</p>
+
+    <ol class="steps">
+      <li>按 <strong>開始錄音</strong> 的大麥克風按鈕，瀏覽器問你要不要用麥克風時選「允許」。</li>
+      <li>講完後按 <strong>停止</strong>，可以先試聽；不滿意就按重錄。</li>
+      <li>按 <strong>Save &amp; Share</strong>（儲存並分享）。</li>
+      <li>複製畫面上那串網址（像 <code>https://voca.ro/xxxxxxxx</code>）。</li>
+      <li>回到這一頁，貼到步驟 3。</li>
+    </ol>
+
+    <a class="btn btn--block" id="openVocaroo" href="https://vocaroo.com" target="_blank" rel="noopener noreferrer">
+      開啟 Vocaroo 錄音 ↗
+    </a>
+  </section>
+
+  <!-- 步驟 3：貼連結 -->
+  <section class="card">
+    <h2><span class="step">3</span>貼上錄音連結並送出</h2>
+    <p class="help">把剛剛複製的 Vocaroo 網址貼進來。</p>
+
+    <form id="submitForm" novalidate>
+      <label class="field">
+        <span>Vocaroo 連結</span>
+        <input type="text" id="linkInput" inputmode="url" autocomplete="off"
+               autocapitalize="off" spellcheck="false"
+               placeholder="https://voca.ro/xxxxxxxx">
+      </label>
+
+      <button type="submit" class="btn btn--block" id="submitBtn">送出繳交</button>
+    </form>
+
+    <div id="formMsg" class="msg" hidden></div>
+
+    <!-- 送出成功後的試聽區 -->
+    <div id="doneBox" hidden style="margin-top:18px">
+      <p class="small muted" style="margin:0 0 8px">試聽一下，確認這是你要交的錄音：</p>
+      <div id="donePlayer"></div>
+      <p class="small" style="margin:10px 0 0">
+        <a id="doneLink" href="#" target="_blank" rel="noopener noreferrer">在 Vocaroo 開啟這段錄音 ↗</a>
+      </p>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p style="margin:0">
+      交錯了想重交？選同一個座號再送一次，系統會用新的錄音覆蓋舊的。<br>
+      Vocaroo 的錄音檔放久了可能會被對方網站清掉，請不要刪掉自己的錄音連結。
+    </p>
+  </footer>
+
+</div>
+
+<script src="assets/config.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/vocaroo.js"></script>
+<script src="assets/student.js"></script>
+</body>
+</html>
