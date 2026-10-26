@@ -43,14 +43,14 @@ window.CONFIG = {
      'local'      = 只存在這台裝置的瀏覽器（僅供測試，老師看不到學生的錄音）
                                                                  */
 
-  backend: 'local',
+  backend: 'appsscript',
 
 
   // backend: 'appsscript' 時要填這裡。
   // 部署 Apps Script 後取得的網址，長得像：
   //   https://script.google.com/macros/s/AKfycb..../exec
   appsScript: {
-    url: '',
+    url: 'https://script.google.com/macros/s/AKfycbzjGOsw3rDVqUDEmE-0jQIRjTQ0vReKUfJ_wPffhQsn95kubeesoCiBPmBPB3PCA052/exec',
   },
 
 };
