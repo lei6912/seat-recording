@@ -45,6 +45,11 @@
 
 * { box-sizing: border-box; }
 
+/* hidden 屬性必須蓋過底下任何 display 設定。
+   瀏覽器內建的 [hidden]{display:none} 優先序很低，像 .btn-row{display:flex}
+   或 label.field{display:block} 都會贏過它，導致該藏的元素還是露出來。 */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   padding: 0 16px 56px;
@@ -252,7 +257,6 @@ input:focus, select:focus, textarea:focus {
 .rec-icon--mic { stroke: none; }
 .rec-icon--mic path:first-child { stroke: none; }
 .rec-icon--stop { stroke: none; }
-.rec-icon[hidden] { display: none; }
 
 .rec-info { min-width: 0; }
 .rec-timer {
@@ -262,8 +266,6 @@ input:focus, select:focus, textarea:focus {
   line-height: 1.1;
 }
 .rec-limit { margin-top: 2px; }
-
-#recorderUI[hidden] { display: none; }
 
 /* ---------- 後台進度格 ---------- */
 
@@ -357,7 +359,6 @@ input:focus, select:focus, textarea:focus {
 .msg--err  { background: var(--todo-sl);   color: var(--todo); }
 .msg--warn { background: var(--warn-bg); border: 1px solid var(--warn-bd); }
 .msg--info { background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
-.msg[hidden] { display: none; }
 
 /* ---------- 步驟說明 ---------- */
 
