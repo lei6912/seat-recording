@@ -77,7 +77,7 @@
         <h2 style="margin:0">已繳交的錄音</h2>
         <button type="button" class="btn btn--ghost btn--small" id="exportBtn">匯出 CSV</button>
       </div>
-      <p class="help" style="margin-top:10px">直接按播放鍵就能聽。</p>
+      <p class="help" style="margin-top:10px">按「載入並播放」就能聽；載好後可以直接下載存檔。</p>
       <ul class="sub-list" id="subList"></ul>
       <p class="muted small" id="emptyHint" hidden style="margin:0">還沒有人繳交。</p>
     </section>
@@ -85,7 +85,9 @@
     <!-- 手動補登 -->
     <section class="card">
       <h2>手動補登 / 修改</h2>
-      <p class="help">學生把連結用別的方式給你（例如寫在紙上、傳訊息）時，可以在這裡代為登錄。</p>
+      <p class="help">學生的裝置無法錄音時，可以請他用別的方式錄（例如
+        <a href="https://vocaroo.com" target="_blank" rel="noopener noreferrer">Vocaroo</a>）
+        再把連結給你，在這裡代為登錄。</p>
 
       <form id="manualForm" novalidate>
         <label class="field">
@@ -97,7 +99,7 @@
           <input type="text" id="manualName">
         </label>
         <label class="field">
-          <span>Vocaroo 連結</span>
+          <span>錄音連結</span>
           <input type="text" id="manualLink" autocapitalize="off" spellcheck="false"
                  placeholder="https://voca.ro/xxxxxxxx">
         </label>
@@ -111,7 +113,7 @@
       <p style="margin:0 0 6px"><strong>安全性說明</strong></p>
       <p style="margin:0">
         這是純靜態網站，後台帳密寫在前端程式碼裡，只能擋住隨手點進來的人，
-        懂技術的人看網頁原始碼就能看到帳密、也能直接讀取資料。
+        懂技術的人看網頁原始碼就能看到帳密、也能直接讀取學生的錄音。
         請不要在這裡放需要保密的內容。
       </p>
       <p style="margin:8px 0 0">資料來源：<span id="backendName" class="nowrap"></span></p>

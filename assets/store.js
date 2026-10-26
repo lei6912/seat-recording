@@ -1,9 +1,12 @@
 /* ===================================================================
-   儲存層 —— 把「資料存哪裡」這件事包起來
+   儲存層 —— 把「錄音檔和繳交紀錄存哪裡」包起來
+
    上層（學生頁 / 後台）只會用到：
-     Store.list()          讀取全部紀錄
-     Store.upsert(entry)   新增或覆蓋某個座號
-     Store.remove(seat)    刪除某個座號
+     Store.list()                     讀取全部繳交紀錄
+     Store.submitRecording({...})     上傳一段錄音
+     Store.submitLink({...})          登錄一個外部連結（老師手動補登用）
+     Store.loadAudio(seat)            取回某座號的錄音（回傳 Blob）
+     Store.remove(seat)               刪除某座號
    =================================================================== */
 
 (function () {
@@ -13,11 +16,14 @@
 
   /* ---------- 共用工具 ---------- */
 
-  function nowISO() {
-    return new Date().toISOString();
+  function nowISO() { return new Date().toISOString(); }
+
+  function fail(msg) {
+    var err = new Error(msg);
+    err.friendly = true;
+    return err;
   }
 
-  // 把 entries 正規化成 { "1": {...}, "2": {...} } 的形式
   function normalize(raw) {
     var out = {};
     if (!raw) return out;
@@ -28,174 +34,144 @@
       if (!e) return;
       var seat = parseInt(e.seat, 10);
       if (!seat || seat < 1) return;
+
       out[String(seat)] = {
         seat: seat,
         name: e.name || '',
+        kind: e.kind === 'link' ? 'link' : 'recording',
+        fileId: e.fileId || '',
         url: e.url || '',
-        vocarooId: e.vocarooId || '',
+        mime: e.mime || '',
+        durationMs: parseInt(e.durationMs, 10) || 0,
         updatedAt: e.updatedAt || '',
       };
     });
+
     return out;
   }
 
-  function fail(msg) {
-    var err = new Error(msg);
-    err.friendly = true;
-    return err;
+  // Blob → base64（分段處理，檔案大也不會爆堆疊）
+  function blobToBase64(blob) {
+    return blob.arrayBuffer().then(function (buf) {
+      var bytes = new Uint8Array(buf);
+      var CHUNK = 0x8000;
+      var parts = [];
+      for (var i = 0; i < bytes.length; i += CHUNK) {
+        parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
+      }
+      return btoa(parts.join(''));
+    });
+  }
+
+  // base64 → Blob
+  function base64ToBlob(b64, mime) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime || 'application/octet-stream' });
   }
 
   /* =================================================================
-     後端 1：Google Apps Script + Google 試算表
+     後端 1：Google Apps Script
+       - 錄音檔存到老師自己的 Google 雲端硬碟
+       - 繳交紀錄寫在 Google 試算表
      ================================================================= */
 
   var appsScript = {
-    name: 'Google 試算表（Apps Script）',
+    name: 'Google 雲端硬碟 + 試算表',
 
-    isConfigured: function () {
-      return !!(C.appsScript && C.appsScript.url);
-    },
+    isConfigured: function () { return !!(C.appsScript && C.appsScript.url); },
 
     hint: '請先依 README 部署 Apps Script，再把網址填進 assets/config.js 的 appsScript.url。',
 
-    _call: function (payload) {
+    _get: function (params) {
       var url = C.appsScript.url;
-      var opts;
+      url += (url.indexOf('?') >= 0 ? '&' : '?') + params;
 
-      if (payload) {
-        // 刻意使用 text/plain：這是 CORS 的「安全名單」內容類型，
-        // 不會觸發 preflight（Apps Script 無法回應 OPTIONS 請求）。
-        opts = {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-          redirect: 'follow',
-        };
-      } else {
-        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'action=list';
-        opts = { method: 'GET', redirect: 'follow' };
-      }
-
-      return fetch(url, opts)
+      return fetch(url, { method: 'GET', redirect: 'follow' })
         .catch(function () {
-          throw fail('連不到 Google 試算表。請確認 config.js 的網址正確，而且 Apps Script 部署時「誰可以存取」選了「所有人」。');
+          throw fail('連不到伺服器。請確認 config.js 的網址正確，而且 Apps Script 部署時「誰可以存取」選了「所有人」。');
         })
-        .then(function (res) {
-          if (!res.ok) throw fail('Google 試算表回應錯誤（HTTP ' + res.status + '）。');
-          return res.text();
+        .then(appsScript._parse);
+    },
+
+    _post: function (payload) {
+      // 刻意使用 text/plain：這是 CORS 的「安全名單」內容類型，
+      // 不會觸發 preflight（Apps Script 無法回應 OPTIONS 請求）。
+      return fetch(C.appsScript.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+        redirect: 'follow',
+      })
+        .catch(function () {
+          throw fail('連不到伺服器。請確認網路連線，以及 Apps Script 的部署設定。');
         })
-        .then(function (text) {
-          var data;
-          try {
-            data = JSON.parse(text);
-          } catch (e) {
-            throw fail('Google 試算表回傳的不是資料，通常表示 Apps Script 沒有部署成「網頁應用程式／所有人可存取」。');
-          }
-          if (data && data.ok === false) throw fail(data.error || '後端回報錯誤。');
-          return data;
-        });
+        .then(appsScript._parse);
     },
 
-    list: function () {
-      return appsScript._call(null).then(function (data) {
-        return normalize(data.entries);
-      });
-    },
+    _parse: function (res) {
+      if (!res.ok) throw fail('伺服器回應錯誤（HTTP ' + res.status + '）。');
 
-    upsert: function (entry) {
-      return appsScript._call({ action: 'upsert', entry: entry }).then(function () {
-        return entry;
-      });
-    },
-
-    remove: function (seat) {
-      return appsScript._call({ action: 'remove', seat: seat });
-    },
-  };
-
-  /* =================================================================
-     後端 2：jsonstorage.net（整份文件讀出 → 改 → 寫回）
-     ================================================================= */
-
-  var jsonStorage = {
-    name: 'jsonstorage.net',
-
-    isConfigured: function () {
-      return !!(C.jsonStorage && C.jsonStorage.itemId && C.jsonStorage.apiKey);
-    },
-
-    hint: '請在 assets/config.js 填入 jsonStorage.itemId 與 jsonStorage.apiKey。',
-
-    _url: function () {
-      return 'https://api.jsonstorage.net/v1/json/' + C.jsonStorage.itemId +
-             '?apiKey=' + encodeURIComponent(C.jsonStorage.apiKey);
-    },
-
-    _read: function () {
-      return fetch(jsonStorage._url(), { method: 'GET', cache: 'no-store' })
-        .catch(function () { throw fail('連不到 jsonstorage.net。'); })
-        .then(function (res) {
-          if (!res.ok) throw fail('jsonstorage.net 回應錯誤（HTTP ' + res.status + '）。請確認 itemId 與 apiKey。');
-          return res.json();
-        })
-        .then(function (doc) { return doc || {}; });
-    },
-
-    _write: function (doc) {
-      return fetch(jsonStorage._url(), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(doc),
-      }).then(function (res) {
-        if (!res.ok) throw fail('寫入 jsonstorage.net 失敗（HTTP ' + res.status + '）。');
-        return true;
+      return res.text().then(function (text) {
+        var data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          throw fail('伺服器回傳的不是資料，通常表示 Apps Script 沒有部署成「網頁應用程式／所有人可存取」。');
+        }
+        if (data && data.ok === false) throw fail(data.error || '伺服器回報錯誤。');
+        return data;
       });
     },
 
     list: function () {
-      return jsonStorage._read().then(function (doc) {
-        return normalize(doc.entries);
-      });
+      return appsScript._get('action=list').then(function (d) { return normalize(d.entries); });
     },
 
-    // 整份覆寫會有「同時提交互相覆蓋」的風險，
-    // 所以寫完再讀回來確認，沒寫進去就重試。
-    upsert: function (entry) {
-      var attempt = 0;
-
-      function tryOnce() {
-        attempt++;
-        return jsonStorage._read().then(function (doc) {
-          var entries = normalize(doc.entries);
-          entries[String(entry.seat)] = entry;
-          return jsonStorage._write({ entries: entries }).then(function () {
-            return jsonStorage._read();
-          }).then(function (after) {
-            var saved = normalize(after.entries)[String(entry.seat)];
-            if (saved && saved.url === entry.url) return entry;
-            if (attempt >= 4) throw fail('儲存時和其他同學的提交撞在一起了，請重新送出一次。');
-            return new Promise(function (r) { setTimeout(r, 300 + Math.random() * 700); }).then(tryOnce);
-          });
+    submitRecording: function (sub) {
+      return blobToBase64(sub.blob).then(function (b64) {
+        return appsScript._post({
+          action: 'upload',
+          seat: sub.seat,
+          name: sub.name,
+          mime: sub.mime,
+          ext: sub.ext,
+          durationMs: sub.durationMs,
+          b64: b64,
         });
-      }
+      }).then(function (d) { return normalize(d.entries)[String(sub.seat)]; });
+    },
 
-      return tryOnce();
+    submitLink: function (sub) {
+      return appsScript._post({
+        action: 'link',
+        seat: sub.seat,
+        name: sub.name,
+        url: sub.url,
+      }).then(function (d) { return normalize(d.entries)[String(sub.seat)]; });
+    },
+
+    loadAudio: function (seat) {
+      return appsScript._get('action=audio&seat=' + encodeURIComponent(seat)).then(function (d) {
+        if (!d.b64) throw fail('找不到這個座號的錄音檔。');
+        return base64ToBlob(d.b64, d.mime);
+      });
     },
 
     remove: function (seat) {
-      return jsonStorage._read().then(function (doc) {
-        var entries = normalize(doc.entries);
-        delete entries[String(seat)];
-        return jsonStorage._write({ entries: entries });
-      });
+      return appsScript._post({ action: 'remove', seat: seat });
     },
   };
 
   /* =================================================================
-     後端 3：本機瀏覽器（只供測試，資料不會跨裝置）
+     後端 2：本機測試模式
+       錄音檔放 IndexedDB、紀錄放 localStorage，只存在這台裝置。
      ================================================================= */
 
-  var LOCAL_KEY = 'seat-recording:entries';
+  var META_KEY = 'seat-recording:entries';
+  var DB_NAME = 'seat-recording';
+  var DB_STORE = 'audio';
 
   var local = {
     name: '本機測試模式',
@@ -204,38 +180,108 @@
 
     hint: '',
 
-    _read: function () {
+    _db: function () {
+      return new Promise(function (resolve, reject) {
+        if (!window.indexedDB) { reject(fail('這個瀏覽器不支援 IndexedDB，無法在測試模式下存錄音。')); return; }
+
+        var req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE);
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(fail('無法開啟本機資料庫（可能是無痕模式）。')); };
+      });
+    },
+
+    _tx: function (mode, fn) {
+      return local._db().then(function (db) {
+        return new Promise(function (resolve, reject) {
+          var tx = db.transaction(DB_STORE, mode);
+          var store = tx.objectStore(DB_STORE);
+          var req = fn(store);
+          tx.oncomplete = function () { resolve(req ? req.result : undefined); };
+          tx.onerror = function () { reject(fail('本機資料庫寫入失敗。')); };
+        });
+      });
+    },
+
+    _readMeta: function () {
       try {
-        return normalize(JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}'));
+        return normalize(JSON.parse(localStorage.getItem(META_KEY) || '{}'));
       } catch (e) {
         return {};
       }
     },
 
-    _write: function (entries) {
+    _writeMeta: function (entries) {
       try {
-        localStorage.setItem(LOCAL_KEY, JSON.stringify(entries));
+        localStorage.setItem(META_KEY, JSON.stringify(entries));
       } catch (e) {
         throw fail('這台裝置的瀏覽器不允許儲存資料（可能是無痕模式）。');
       }
     },
 
-    list: function () {
-      return Promise.resolve(local._read());
+    list: function () { return Promise.resolve(local._readMeta()); },
+
+    submitRecording: function (sub) {
+      var entry = {
+        seat: sub.seat,
+        name: sub.name,
+        kind: 'recording',
+        fileId: 'local-' + sub.seat,
+        url: '',
+        mime: sub.mime,
+        durationMs: sub.durationMs,
+        updatedAt: nowISO(),
+      };
+
+      return local._tx('readwrite', function (store) {
+        return store.put({ blob: sub.blob, mime: sub.mime }, String(sub.seat));
+      }).then(function () {
+        var entries = local._readMeta();
+        entries[String(sub.seat)] = entry;
+        local._writeMeta(entries);
+        return entry;
+      });
     },
 
-    upsert: function (entry) {
-      var entries = local._read();
-      entries[String(entry.seat)] = entry;
-      local._write(entries);
+    submitLink: function (sub) {
+      var entry = {
+        seat: sub.seat,
+        name: sub.name,
+        kind: 'link',
+        fileId: '',
+        url: sub.url,
+        mime: '',
+        durationMs: 0,
+        updatedAt: nowISO(),
+      };
+
+      var entries = local._readMeta();
+      entries[String(sub.seat)] = entry;
+      local._writeMeta(entries);
       return Promise.resolve(entry);
     },
 
+    loadAudio: function (seat) {
+      return local._tx('readonly', function (store) {
+        return store.get(String(seat));
+      }).then(function (rec) {
+        if (!rec || !rec.blob) throw fail('找不到這個座號的錄音檔。');
+        return rec.blob;
+      });
+    },
+
     remove: function (seat) {
-      var entries = local._read();
-      delete entries[String(seat)];
-      local._write(entries);
-      return Promise.resolve(true);
+      return local._tx('readwrite', function (store) {
+        return store.delete(String(seat));
+      }).then(function () {
+        var entries = local._readMeta();
+        delete entries[String(seat)];
+        local._writeMeta(entries);
+        return true;
+      });
     },
   };
 
@@ -243,13 +289,19 @@
      對外介面
      ================================================================= */
 
-  var backends = {
-    appsscript: appsScript,
-    jsonstorage: jsonStorage,
-    local: local,
-  };
-
+  var backends = { appsscript: appsScript, local: local };
   var active = backends[C.backend] || local;
+
+  function cleanSeat(seat) {
+    var n = parseInt(seat, 10);
+    if (!n || n < 1) throw fail('座號不正確。');
+    return n;
+  }
+
+  function guard() {
+    if (!active.isConfigured()) return Promise.reject(fail(active.hint));
+    return null;
+  }
 
   window.Store = {
     backendKey: C.backend,
@@ -260,25 +312,44 @@
     configHint: function () { return active.hint; },
 
     list: function () {
-      if (!active.isConfigured()) return Promise.reject(fail(active.hint));
-      return active.list();
+      return guard() || active.list();
     },
 
-    upsert: function (entry) {
-      if (!active.isConfigured()) return Promise.reject(fail(active.hint));
-      var clean = {
-        seat: parseInt(entry.seat, 10),
-        name: (entry.name || '').trim().slice(0, 40),
-        url: entry.url || '',
-        vocarooId: entry.vocarooId || '',
-        updatedAt: nowISO(),
-      };
-      return active.upsert(clean);
+    submitRecording: function (sub) {
+      var blocked = guard();
+      if (blocked) return blocked;
+
+      if (!sub || !sub.blob || !sub.blob.size) {
+        return Promise.reject(fail('沒有錄音內容可以送出。'));
+      }
+
+      return active.submitRecording({
+        seat: cleanSeat(sub.seat),
+        name: (sub.name || '').trim().slice(0, 40),
+        blob: sub.blob,
+        mime: sub.mime || sub.blob.type || 'audio/webm',
+        ext: sub.ext || 'webm',
+        durationMs: parseInt(sub.durationMs, 10) || 0,
+      });
+    },
+
+    submitLink: function (sub) {
+      var blocked = guard();
+      if (blocked) return blocked;
+
+      return active.submitLink({
+        seat: cleanSeat(sub.seat),
+        name: (sub.name || '').trim().slice(0, 40),
+        url: sub.url || '',
+      });
+    },
+
+    loadAudio: function (seat) {
+      return guard() || active.loadAudio(cleanSeat(seat));
     },
 
     remove: function (seat) {
-      if (!active.isConfigured()) return Promise.reject(fail(active.hint));
-      return active.remove(parseInt(seat, 10));
+      return guard() || active.remove(cleanSeat(seat));
     },
   };
 })();

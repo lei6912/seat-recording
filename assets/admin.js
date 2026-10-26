@@ -45,7 +45,11 @@
     backendName: document.getElementById('backendName'),
   };
 
-  var state = { entries: {}, todo: [] };
+  var state = {
+    entries: {},
+    todo: [],
+    objectUrls: [],   // 已經載入的錄音，重新整理清單時要釋放
+  };
 
   /* ---------- 小工具 ---------- */
 
@@ -64,9 +68,34 @@
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
+  function formatDuration(ms) {
+    if (!ms) return '';
+    var total = Math.round(ms / 1000);
+    var m = Math.floor(total / 60);
+    var s = total % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
   function flash(node, cls, text) {
     show(node, cls, text);
     setTimeout(function () { hide(node); }, 4000);
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  function extFromMime(mime) {
+    var m = String(mime || '');
+    if (m.indexOf('webm') >= 0) return 'webm';
+    if (m.indexOf('mp4') >= 0 || m.indexOf('m4a') >= 0) return 'm4a';
+    if (m.indexOf('ogg') >= 0) return 'ogg';
+    if (m.indexOf('wav') >= 0) return 'wav';
+    if (m.indexOf('mpeg') >= 0) return 'mp3';
+    return 'webm';
+  }
+
+  function releaseObjectUrls() {
+    state.objectUrls.forEach(function (u) { URL.revokeObjectURL(u); });
+    state.objectUrls = [];
   }
 
   /* ---------- 登入 ----------
@@ -108,8 +137,8 @@
 
     if (window.Store.isDemo) {
       show(el.backendWarn, 'warn',
-        '目前是「本機測試模式」：只會看到你自己在這台裝置上輸入的資料，' +
-        '看不到學生從自己手機交的錄音。請依 README 設定 assets/config.js 的 backend。');
+        '目前是「本機測試模式」：只會看到你自己在這台裝置上錄的東西，' +
+        '看不到學生從自己手機交的錄音。請依 README 設定 assets/config.js。');
     } else if (!window.Store.isConfigured()) {
       show(el.backendWarn, 'err', '系統還沒設定完成：' + window.Store.configHint());
     }
@@ -124,7 +153,7 @@
     show(el.loadMsg, 'info', '讀取中…');
     el.refreshBtn.disabled = true;
 
-    window.Store.list().then(function (entries) {
+    return window.Store.list().then(function (entries) {
       state.entries = entries;
       hide(el.loadMsg);
       render();
@@ -135,13 +164,17 @@
     });
   }
 
+  function hasSubmission(e) {
+    return !!(e && (e.fileId || e.url));
+  }
+
   function render() {
     var done = [];
     var todo = [];
 
     for (var i = 1; i <= C.seatCount; i++) {
       var e = state.entries[String(i)];
-      if (e && e.url) done.push(e); else todo.push(i);
+      if (hasSubmission(e)) done.push(e); else todo.push(i);
     }
     state.todo = todo;
 
@@ -164,7 +197,7 @@
 
     for (var i = 1; i <= C.seatCount; i++) {
       var e = state.entries[String(i)];
-      var ok = !!(e && e.url);
+      var ok = hasSubmission(e);
 
       var cell = document.createElement('div');
       cell.className = 'status-cell ' + (ok ? 'is-done' : 'is-todo');
@@ -185,7 +218,87 @@
     el.statusGrid.appendChild(frag);
   }
 
+  /* 錄音播放器：點了才去抓檔案，不會一進後台就下載 21 個錄音 */
+  function buildRecordingPlayer(entry) {
+    var box = document.createElement('div');
+    box.className = 'player';
+
+    var audio = document.createElement('audio');
+    audio.controls = true;
+    audio.className = 'player-audio';
+    audio.hidden = true;
+
+    var loadBtn = document.createElement('button');
+    loadBtn.type = 'button';
+    loadBtn.className = 'btn btn--small';
+    loadBtn.textContent = '載入並播放';
+
+    var err = document.createElement('div');
+    err.className = 'small';
+    err.style.color = 'var(--todo)';
+    err.hidden = true;
+
+    loadBtn.addEventListener('click', function () {
+      loadBtn.disabled = true;
+      loadBtn.textContent = '載入中…';
+      err.hidden = true;
+
+      window.Store.loadAudio(entry.seat).then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        state.objectUrls.push(url);
+
+        audio.src = url;
+        audio.hidden = false;
+        loadBtn.hidden = true;
+
+        var dl = document.createElement('a');
+        dl.className = 'btn btn--ghost btn--small';
+        dl.href = url;
+        dl.download = '座號' + pad2(entry.seat) +
+                      (entry.name ? '-' + entry.name : '') + '.' + extFromMime(entry.mime);
+        dl.textContent = '下載';
+        dl.style.marginTop = '6px';
+        dl.style.display = 'inline-flex';
+        box.appendChild(dl);
+
+        var p = audio.play();
+        if (p && p.catch) p.catch(function () { /* 瀏覽器阻擋自動播放，使用者再按一下就好 */ });
+
+      }).catch(function (e) {
+        loadBtn.disabled = false;
+        loadBtn.textContent = '重試載入';
+        err.textContent = '載入失敗：' + (e && e.message ? e.message : '不知名的錯誤');
+        err.hidden = false;
+      });
+    });
+
+    box.appendChild(loadBtn);
+    box.appendChild(audio);
+    box.appendChild(err);
+    return box;
+  }
+
+  /* 手動補登的外部連結：Vocaroo 用內嵌播放器，其他的就給連結 */
+  function buildLinkPlayer(entry) {
+    var id = window.Vocaroo ? window.Vocaroo.parseId(entry.url) : null;
+    if (id) return window.Vocaroo.createPlayer(id);
+
+    var box = document.createElement('div');
+    box.className = 'player';
+
+    var a = document.createElement('a');
+    a.className = 'btn btn--ghost btn--small';
+    a.href = entry.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = '開啟連結 ↗';
+    box.appendChild(a);
+
+    return box;
+  }
+
   function renderSubList(done) {
+    releaseObjectUrls();
     el.subList.innerHTML = '';
     el.emptyHint.hidden = done.length > 0;
 
@@ -210,25 +323,30 @@
 
       var tm = document.createElement('div');
       tm.className = 'tm';
-      tm.textContent = '繳交於 ' + formatTime(e.updatedAt);
+      var bits = ['繳交於 ' + formatTime(e.updatedAt)];
+      if (e.durationMs) bits.push('長度 ' + formatDuration(e.durationMs));
+      if (e.kind === 'link') bits.push('手動補登');
+      tm.textContent = bits.join('・');
       meta.appendChild(tm);
 
       li.appendChild(meta);
 
-      if (e.vocarooId) {
-        li.appendChild(window.Vocaroo.createPlayer(e.vocarooId));
-      }
+      li.appendChild(e.kind === 'link' ? buildLinkPlayer(e) : buildRecordingPlayer(e));
 
       var actions = document.createElement('div');
       actions.className = 'sub-actions';
 
-      var open = document.createElement('a');
-      open.className = 'btn btn--ghost btn--small';
-      open.href = e.url;
-      open.target = '_blank';
-      open.rel = 'noopener noreferrer';
-      open.textContent = '開啟 ↗';
-      actions.appendChild(open);
+      // 錄音檔在雲端硬碟上的頁面（手動補登的連結已經在播放器那邊了）
+      if (e.kind !== 'link' && e.url) {
+        var open = document.createElement('a');
+        open.className = 'btn btn--ghost btn--small';
+        open.href = e.url;
+        open.target = '_blank';
+        open.rel = 'noopener noreferrer';
+        open.textContent = 'Drive ↗';
+        open.title = '在 Google 雲端硬碟開啟這個錄音檔';
+        actions.appendChild(open);
+      }
 
       var del = document.createElement('button');
       del.type = 'button';
@@ -243,7 +361,7 @@
   }
 
   function removeEntry(seat) {
-    if (!window.confirm('要刪除 ' + seat + ' 號的繳交紀錄嗎？刪除後該座號會變回「未交」。')) return;
+    if (!window.confirm('要刪除 ' + seat + ' 號的繳交紀錄嗎？\n錄音檔會移到雲端硬碟的垃圾桶，該座號會變回「未交」。')) return;
 
     window.Store.remove(seat).then(function () {
       delete state.entries[String(seat)];
@@ -283,17 +401,18 @@
   /* ---------- 匯出 CSV ---------- */
 
   function exportCsv() {
-    var rows = [['座號', '姓名', '狀態', '繳交時間', 'Vocaroo 連結']];
+    var rows = [['座號', '姓名', '狀態', '長度', '繳交時間', '錄音檔位置']];
 
     for (var i = 1; i <= C.seatCount; i++) {
       var e = state.entries[String(i)];
-      var ok = !!(e && e.url);
+      var ok = hasSubmission(e);
       rows.push([
         i,
         ok ? (e.name || '') : '',
         ok ? '已交' : '未交',
+        ok ? formatDuration(e.durationMs) : '',
         ok ? formatTime(e.updatedAt) : '',
-        ok ? e.url : '',
+        ok ? (e.url || '') : '',
       ]);
     }
 
@@ -336,21 +455,24 @@
     var raw = el.manualLink.value.trim();
 
     if (!raw) {
-      show(el.manualMsg, 'err', '請貼上 Vocaroo 連結。');
+      show(el.manualMsg, 'err', '請貼上錄音連結。');
       return;
     }
 
-    var id = window.Vocaroo.parseId(raw);
-    if (!id) {
-      show(el.manualMsg, 'err', '這看起來不是 Vocaroo 的連結。');
+    // Vocaroo 連結統一整理成標準網址，其他連結原樣存下
+    var url = raw;
+    var id = window.Vocaroo ? window.Vocaroo.parseId(raw) : null;
+    if (id) url = window.Vocaroo.shareUrl(id);
+
+    if (!/^https?:\/\//i.test(url)) {
+      show(el.manualMsg, 'err', '連結要以 http:// 或 https:// 開頭。');
       return;
     }
 
-    window.Store.upsert({
+    window.Store.submitLink({
       seat: seat,
       name: el.manualName.value.trim(),
-      url: window.Vocaroo.shareUrl(id),
-      vocarooId: id,
+      url: url,
     }).then(function (saved) {
       state.entries[String(saved.seat)] = saved;
       el.manualLink.value = '';

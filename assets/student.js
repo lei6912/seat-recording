@@ -1,5 +1,5 @@
 /* ===================================================================
-   學生頁邏輯
+   學生頁邏輯：選座號 → 在網頁裡錄音 → 送出
    =================================================================== */
 
 (function () {
@@ -14,22 +14,41 @@
     noteCard:    document.getElementById('noteCard'),
     note:        document.getElementById('assignmentNote'),
     deadline:    document.getElementById('deadlineNote'),
+
     seatGrid:    document.getElementById('seatGrid'),
     seatNotice:  document.getElementById('seatNotice'),
     nameField:   document.getElementById('nameField'),
     nameInput:   document.getElementById('nameInput'),
-    form:        document.getElementById('submitForm'),
-    linkInput:   document.getElementById('linkInput'),
-    submitBtn:   document.getElementById('submitBtn'),
+
+    supportWarn: document.getElementById('supportWarn'),
+    recorderUI:  document.getElementById('recorderUI'),
+    recHint:     document.getElementById('recHint'),
+    recBtn:      document.getElementById('recBtn'),
+    recTimer:    document.getElementById('recTimer'),
+    recLimit:    document.getElementById('recLimit'),
+    iconMic:     document.querySelector('.rec-icon--mic'),
+    iconStop:    document.querySelector('.rec-icon--stop'),
+
+    reviewBox:   document.getElementById('reviewBox'),
+    reviewAudio: document.getElementById('reviewAudio'),
+    sendBtn:     document.getElementById('sendBtn'),
+    redoBtn:     document.getElementById('redoBtn'),
+
     formMsg:     document.getElementById('formMsg'),
     doneBox:     document.getElementById('doneBox'),
-    donePlayer:  document.getElementById('donePlayer'),
-    doneLink:    document.getElementById('doneLink'),
+    doneAudio:   document.getElementById('doneAudio'),
   };
+
+  var maxMs = (parseInt(C.maxRecordSeconds, 10) || 180) * 1000;
 
   var state = {
     seat: null,
-    entries: {},   // 既有紀錄，用來提示「你已經交過了」
+    entries: {},
+    rec: null,        // 正在進行的 Recorder 實例
+    recording: false,
+    take: null,       // 錄好的 {blob, mime, durationMs, ext}
+    objectUrl: null,  // 給 <audio> 用的暫時網址
+    sending: false,
   };
 
   /* ---------- 小工具 ---------- */
@@ -39,7 +58,6 @@
     node.textContent = text;
     node.hidden = false;
   }
-
   function hide(node) { node.hidden = true; }
 
   function formatTime(iso) {
@@ -50,6 +68,13 @@
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
+  function freeObjectUrl() {
+    if (state.objectUrl) {
+      URL.revokeObjectURL(state.objectUrl);
+      state.objectUrl = null;
+    }
+  }
+
   /* ---------- 初始化畫面 ---------- */
 
   function applyConfig() {
@@ -57,7 +82,6 @@
       document.title = C.title + '｜錄音繳交';
       el.pageTitle.textContent = C.title;
     }
-
     if (C.assignmentNote) {
       el.note.textContent = C.assignmentNote;
       el.noteCard.hidden = false;
@@ -67,16 +91,26 @@
       el.deadline.hidden = false;
       el.noteCard.hidden = false;
     }
-
     if (C.requireName) el.nameField.hidden = false;
+
+    el.recLimit.textContent = '最長 ' + window.Recorder.formatDuration(maxMs);
 
     if (window.Store.isDemo) {
       show(el.backendWarn, 'warn',
-        '目前是「本機測試模式」：資料只存在這台裝置，老師的後台看不到。' +
-        '正式使用前請依 README 設定 assets/config.js 的 backend。');
+        '目前是「本機測試模式」：錄音只存在這台裝置，老師的後台看不到。' +
+        '正式使用前請依 README 設定 assets/config.js。');
     } else if (!window.Store.isConfigured()) {
       show(el.backendWarn, 'err', '系統還沒設定完成：' + window.Store.configHint());
     }
+  }
+
+  function checkSupport() {
+    var s = window.Recorder.support();
+    if (s.ok) return true;
+
+    el.recorderUI.hidden = true;
+    show(el.supportWarn, 'err', s.reason + ' 請告訴老師，由老師代為登錄。');
+    return false;
   }
 
   function buildSeatGrid() {
@@ -102,6 +136,8 @@
   }
 
   function selectSeat(seat) {
+    if (state.recording) return;   // 錄音中不讓換座號
+
     state.seat = seat;
 
     Array.prototype.forEach.call(el.seatGrid.children, function (b) {
@@ -114,16 +150,14 @@
     el.doneBox.hidden = true;
 
     var prev = state.entries[String(seat)];
-    if (prev && prev.url) {
+    if (prev && (prev.fileId || prev.url)) {
       show(el.seatNotice, 'warn',
-        seat + ' 號在 ' + formatTime(prev.updatedAt) + ' 已經交過了。再送一次會用新的錄音覆蓋舊的。');
+        seat + ' 號在 ' + formatTime(prev.updatedAt) + ' 已經交過了。再錄一次送出會覆蓋舊的錄音。');
       if (prev.name && !el.nameInput.value) el.nameInput.value = prev.name;
     } else {
       hide(el.seatNotice);
     }
   }
-
-  /* ---------- 讀取既有紀錄（讀不到不影響繳交） ---------- */
 
   function loadExisting() {
     if (!window.Store.isConfigured()) return;
@@ -142,12 +176,77 @@
     });
   }
 
-  /* ---------- 送出 ---------- */
+  /* ---------- 錄音 ---------- */
 
-  function handleSubmit(ev) {
-    ev.preventDefault();
+  function setRecordingUI(on) {
+    state.recording = on;
+    el.recBtn.classList.toggle('is-recording', on);
+    el.recBtn.setAttribute('aria-label', on ? '停止錄音' : '開始錄音');
+    el.iconMic.hidden = on;
+    el.iconStop.hidden = !on;
+    el.recHint.textContent = on
+      ? '正在錄音…講完按一下方塊停止。'
+      : '按一下麥克風開始錄音，講完再按一下停止。';
+  }
+
+  function discardTake() {
+    freeObjectUrl();
+    state.take = null;
+    el.reviewAudio.removeAttribute('src');
+    el.reviewBox.hidden = true;
+  }
+
+  function toggleRecord() {
+    if (state.sending) return;
+
+    if (state.recording) {
+      state.rec.stop();
+      return;
+    }
+
     hide(el.formMsg);
     el.doneBox.hidden = true;
+    discardTake();
+    el.recTimer.textContent = '0:00';
+
+    state.rec = window.Recorder.create({
+      maxMs: maxMs,
+
+      onTick: function (ms) {
+        el.recTimer.textContent = window.Recorder.formatDuration(ms);
+      },
+
+      onStop: function (take) {
+        setRecordingUI(false);
+
+        state.take = take;
+        state.objectUrl = URL.createObjectURL(take.blob);
+        el.reviewAudio.src = state.objectUrl;
+        el.reviewBox.hidden = false;
+        el.recTimer.textContent = window.Recorder.formatDuration(take.durationMs);
+      },
+
+      onError: function (err) {
+        setRecordingUI(false);
+        el.recTimer.textContent = '0:00';
+        show(el.formMsg, 'err', err.message);
+      },
+    });
+
+    setRecordingUI(true);
+    state.rec.start();
+  }
+
+  /* ---------- 送出 ---------- */
+
+  function send() {
+    if (state.sending) return;
+    hide(el.formMsg);
+
+    if (!state.take) {
+      show(el.formMsg, 'err', '還沒有錄音，請先按麥克風錄一段。');
+      return;
+    }
 
     if (!state.seat) {
       show(el.formMsg, 'err', '請先在步驟 1 點選你的座號。');
@@ -162,52 +261,52 @@
       return;
     }
 
-    var raw = el.linkInput.value.trim();
-    if (!raw) {
-      show(el.formMsg, 'err', '請貼上 Vocaroo 的錄音連結。');
-      el.linkInput.focus();
-      return;
-    }
+    state.sending = true;
+    el.sendBtn.disabled = true;
+    el.redoBtn.disabled = true;
+    el.sendBtn.textContent = '上傳中…';
 
-    var id = window.Vocaroo.parseId(raw);
-    if (!id) {
-      show(el.formMsg, 'err',
-        '這看起來不是 Vocaroo 的連結。正確的樣子是 https://voca.ro/xxxxxxxx 或 ' +
-        'https://vocaroo.com/xxxxxxxx，請重新複製一次。');
-      el.linkInput.focus();
-      el.linkInput.select();
-      return;
-    }
-
-    el.submitBtn.disabled = true;
-    el.submitBtn.textContent = '送出中…';
-
-    window.Store.upsert({
+    window.Store.submitRecording({
       seat: state.seat,
       name: name,
-      url: window.Vocaroo.shareUrl(id),
-      vocarooId: id,
+      blob: state.take.blob,
+      mime: state.take.mime,
+      ext: state.take.ext,
+      durationMs: state.take.durationMs,
     }).then(function (saved) {
       state.entries[String(saved.seat)] = saved;
 
       show(el.formMsg, 'ok', '繳交成功！' + saved.seat + ' 號的錄音已經送到老師那邊了。');
       hide(el.seatNotice);
 
-      el.donePlayer.innerHTML = '';
-      el.donePlayer.appendChild(window.Vocaroo.createPlayer(id));
-      el.doneLink.href = window.Vocaroo.shareUrl(id);
+      // 把剛才的錄音留在頁面上讓學生確認，不必再下載一次
+      el.doneAudio.src = state.objectUrl;
       el.doneBox.hidden = false;
+
+      state.take = null;
+      el.reviewBox.hidden = true;
+      el.reviewAudio.removeAttribute('src');
       el.doneBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
     }).catch(function (err) {
       show(el.formMsg, 'err',
         '送出失敗：' + (err && err.message ? err.message : '不知名的錯誤') +
-        '　請檢查網路後再按一次送出。');
+        '　錄音還在，請檢查網路後再按一次送出。');
 
     }).then(function () {
-      el.submitBtn.disabled = false;
-      el.submitBtn.textContent = '送出繳交';
+      state.sending = false;
+      el.sendBtn.disabled = false;
+      el.redoBtn.disabled = false;
+      el.sendBtn.textContent = '送出繳交';
     });
+  }
+
+  function redo() {
+    if (state.sending) return;
+    hide(el.formMsg);
+    el.doneBox.hidden = true;
+    discardTake();
+    el.recTimer.textContent = '0:00';
   }
 
   /* ---------- 啟動 ---------- */
@@ -215,5 +314,18 @@
   applyConfig();
   buildSeatGrid();
   loadExisting();
-  el.form.addEventListener('submit', handleSubmit);
+
+  if (checkSupport()) {
+    el.recBtn.addEventListener('click', toggleRecord);
+    el.sendBtn.addEventListener('click', send);
+    el.redoBtn.addEventListener('click', redo);
+  }
+
+  // 錄音中不小心關掉分頁時提醒一下
+  window.addEventListener('beforeunload', function (ev) {
+    if (state.recording || state.take) {
+      ev.preventDefault();
+      ev.returnValue = '';
+    }
+  });
 })();
