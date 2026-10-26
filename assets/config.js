@@ -25,6 +25,26 @@ window.CONFIG = {
   maxRecordSeconds: 180,
 
 
+  /* ---------- 錄音品質 ----------
+     bitsPerSecond 越高聲音越清楚、檔案越大。
+       48000  音質普通，檔案最小
+       96000  預設，朗讀作業很夠用
+       128000 接近無損，檔案約為預設的 1.3 倍
+
+     下面三項是瀏覽器為了「通話」設計的處理。
+     關閉（false）聲音比較自然飽滿；開啟（true）比較能壓住教室的背景雜音，
+     但聲音會變薄、變悶，忽大忽小。預設全部關閉，以音質優先。
+     如果錄音環境很吵，再把 noiseSuppression 改成 true 試試。      */
+
+  audio: {
+    bitsPerSecond: 96000,
+    sampleRate: 48000,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  },
+
+
   /* ---------- 後台帳密 ----------
      注意：這是純靜態網站，帳密寫在前端程式裡，
      只能「擋住不小心點進來的人」，不是真正的安全機制。

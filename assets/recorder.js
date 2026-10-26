@@ -44,6 +44,21 @@
     return 'bin';
   }
 
+  // 錄音品質設定，取自 config.js；沒設定就用預設值
+  function quality() {
+    var a = (window.CONFIG && window.CONFIG.audio) || {};
+    return {
+      bitsPerSecond: parseInt(a.bitsPerSecond, 10) || 96000,
+      sampleRate: parseInt(a.sampleRate, 10) || 48000,
+      echoCancellation: a.echoCancellation === true,
+      noiseSuppression: a.noiseSuppression === true,
+      autoGainControl: a.autoGainControl === true,
+    };
+  }
+
+  // 實際拿到的錄音參數（不同裝置給的結果可能不同），方便排查音質問題
+  var achieved = null;
+
   // 這個瀏覽器／這個網址能不能錄音
   function support() {
     if (!window.isSecureContext && location.hostname !== 'localhost') {
@@ -114,14 +129,30 @@
       cancelled = false;
       chunks = [];
 
+      var q = quality();
+
       navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          echoCancellation: q.echoCancellation,
+          noiseSuppression: q.noiseSuppression,
+          autoGainControl: q.autoGainControl,
+          sampleRate: q.sampleRate,
+          channelCount: 1,        // 單聲道：朗讀用不到立體聲，檔案少一半
+        },
       }).then(function (ms) {
         stream = ms;
 
+        // 記下實際生效的參數（裝置不一定會照單全收）
+        try {
+          achieved = stream.getAudioTracks()[0].getSettings();
+          achieved.bitsPerSecond = q.bitsPerSecond;
+          achieved.mimeType = mime;
+        } catch (e) {
+          achieved = null;
+        }
+
         var options = { mimeType: mime };
-        // 壓低位元率：朗讀作業夠用，上傳也快
-        try { options.audioBitsPerSecond = 32000; } catch (e) { /* 忽略 */ }
+        try { options.audioBitsPerSecond = q.bitsPerSecond; } catch (e) { /* 忽略 */ }
 
         try {
           recorder = new MediaRecorder(stream, options);
@@ -196,5 +227,7 @@
     pickMime: pickMime,
     extFor: extFor,
     formatDuration: formatDuration,
+    quality: quality,
+    achieved: function () { return achieved; },
   };
 })();
